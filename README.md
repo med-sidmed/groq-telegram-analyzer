@@ -112,27 +112,6 @@ Check logs in real-time:
 docker compose logs -f
 ```
 
----
-
-## 📂 Project Structure
-
-```text
-telegram-ai-analyzer/
-├── src/
-│   ├── main.rs          # Orchestration and startup
-│   ├── lib.rs           # Library root
-│   ├── bot.rs           # Teloxide logic and Dispatcher
-│   ├── extractor/       # Document extraction
-│   │   ├── mod.rs       # Extraction interface
-│   │   ├── image.rs     # Tesseract OCR
-│   │   └── pdf.rs       # Poppler + Hybrid OCR
-│   ├── ai.rs            # Groq AI integration
-│   └── markdown.rs      # MD conversion and normalization
-├── temp/                # Temporary files (auto-managed)
-├── .env                 # Configuration (secret)
-├── Cargo.toml           # Rust dependencies
-└── README.md            # Documentation
-```
 
 ---
 
