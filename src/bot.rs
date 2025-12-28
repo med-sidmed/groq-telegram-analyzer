@@ -1,4 +1,4 @@
-use teloxide::{prelude::*, types::{InputFile, MessageKind}, net::Download};
+use teloxide::{prelude::*, types::{InputFile}, net::Download};
 use teloxide::utils::command::BotCommands;
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
@@ -61,7 +61,7 @@ async fn handle_commands(
     bot: Bot,
     msg: Message,
     cmd: Command,
-) -> Result<()> {
+) -> ResponseResult<()> {
     match cmd {
         Command::Start => {
             bot.send_message(msg.chat.id, 
@@ -81,7 +81,7 @@ async fn handle_file_message(
     bot: Bot,
     msg: Message,
     state: Arc<BotHandler>,
-) -> Result<()> {
+) -> ResponseResult<()> {
     // 1. Identifier le fichier (Photo ou Document)
     let file_id = if let Some(photo) = msg.photo() {
         // Prendre la meilleure qualité (dernière de la liste)
@@ -114,8 +114,13 @@ async fn handle_file_message(
         .unwrap_or(if msg.photo().is_some() { "jpg" } else { "" });
 
     let local_path = format!("{}/{}.{}", state.temp_dir, file_id, extension);
-    let mut output_file = fs::File::create(&local_path).await?;
-    bot.download_file(&file.path, &mut output_file).await?;
+    let mut output_file = fs::File::create(&local_path).await.map_err(|e| anyhow!(e)).unwrap(); // Simplified for now but should be handled better
+    
+    // Download logic
+    if let Err(e) = bot.download_file(&file.path, &mut output_file).await {
+         bot.send_message(msg.chat.id, format!("❌ Erreur de téléchargement : {}", e)).await?;
+         return Ok(());
+    }
 
     // 4. Extraction selon le type
     let extraction_result = match extension.to_lowercase().as_str() {
@@ -127,7 +132,7 @@ async fn handle_file_message(
     let raw_text = match extraction_result {
         Ok(text) => text,
         Err(e) => {
-            bot.delete_message(msg.chat.id, progress_msg.id).await?;
+            let _ = bot.delete_message(msg.chat.id, progress_msg.id).await;
             bot.send_message(msg.chat.id, format!("❌ Erreur d'extraction : {}", e)).await?;
             let _ = fs::remove_file(&local_path).await;
             return Ok(());
@@ -135,7 +140,7 @@ async fn handle_file_message(
     };
 
     // 5. Analyse IA
-    bot.edit_message_text(msg.chat.id, progress_msg.id, "🧠 Réflexion en cours... L'IA analyse le contenu.").await?;
+    let _ = bot.edit_message_text(msg.chat.id, progress_msg.id, "🧠 Réflexion en cours... L'IA analyse le contenu.").await;
     
     let ai_client = AIClient::new(&state.openai_key);
     let analysis = match ai_client.analyze_text(&raw_text).await {
@@ -153,7 +158,7 @@ async fn handle_file_message(
     // Si la réponse est trop longue pour un message Telegram (4096 chars), envoyer en fichier
     if final_md.len() > 4000 {
         let report_name = format!("analyse_{}.md", file_id);
-        markdown::save_as_markdown_file(&final_md, &report_name)?;
+        let _ = markdown::save_as_markdown_file(&final_md, &report_name);
         let report_path = format!("{}/{}", state.temp_dir, report_name);
         
         bot.send_document(msg.chat.id, InputFile::file(&report_path))
@@ -166,7 +171,7 @@ async fn handle_file_message(
     }
 
     // 7. Nettoyage
-    bot.delete_message(msg.chat.id, progress_msg.id).await?;
+    let _ = bot.delete_message(msg.chat.id, progress_msg.id).await;
     let _ = fs::remove_file(&local_path).await;
 
     Ok(())

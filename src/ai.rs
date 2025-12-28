@@ -77,8 +77,9 @@ impl AIClient {
             .context("Échec de l'envoi de la requête à OpenAI")?;
 
         if !response.status().is_success() {
+            let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("Erreur API OpenAI ({}): {}", response.status(), error_body));
+            return Err(anyhow!("Erreur API OpenAI ({}): {}", status, error_body));
         }
 
         let chat_response: ChatResponse = response.json()
