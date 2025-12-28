@@ -1,115 +1,98 @@
-use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
+use anyhow::{Result, anyhow, Context};
 use std::time::Duration;
 
-/// Client pour interagir avec l'API OpenAI.
 pub struct AIClient {
     client: Client,
     api_key: String,
 }
 
 #[derive(Serialize)]
-struct ChatRequest {
+struct GroqRequest {
     model: String,
-    messages: Vec<ChatMessage>,
-    temperature: f32,
+    messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<i32>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct ChatMessage {
+#[derive(Serialize, Deserialize)]
+struct Message {
     role: String,
     content: String,
 }
 
 #[derive(Deserialize)]
-struct ChatResponse {
+struct GroqResponse {
     choices: Vec<Choice>,
 }
 
 #[derive(Deserialize)]
 struct Choice {
-    message: ChatMessage,
+    message: Message,
 }
 
 impl AIClient {
-    /// Crée une nouvelle instance de AIClient.
-    pub fn new(api_key: &str) -> Self {
+     pub fn new(api_key: &str) -> Self {
         Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(60))
+                .timeout(Duration::from_secs(120))
                 .build()
-                .expect("Échec de la création du client HTTP"),
+                .expect("Échec de création du client HTTP"),
             api_key: api_key.to_string(),
         }
     }
 
-    /// Analyse le texte fourni via l'API OpenAI (GPT-4o-mini).
-    /// 
-    /// Le système agit comme un professeur expérimenté pour structurer 
-    /// le texte et résoudre d'éventuels exercices.
     pub async fn analyze_text(&self, text: &str) -> Result<String> {
-        let system_prompt = "Tu es un professeur expérimenté. Analyse ce texte, \
-                             convertis-le en Markdown clair, et si c'est un exercice, \
-                             fournis une solution détaillée.";
+        let url = "https://api.groq.com/openai/v1/chat/completions";
 
-        let request = ChatRequest {
-            model: "gpt-4o-mini".to_string(),
+        let system_prompt = "Tu es un professeur expérimenté. Analyse ce texte, convertis-le en Markdown clair, et si c'est un exercice, fournis une solution détaillée.";
+        
+        let request = GroqRequest {
+            model: "llama-3.3-70b-versatile".to_string(),
             messages: vec![
-                ChatMessage {
+                Message {
                     role: "system".to_string(),
                     content: system_prompt.to_string(),
                 },
-                ChatMessage {
+                Message {
                     role: "user".to_string(),
                     content: text.to_string(),
                 },
             ],
-            temperature: 0.3,
+            temperature: Some(0.7),
+            max_tokens: Some(4096),
         };
 
         let response = self.client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&request)
             .send()
             .await
-            .context("Échec de l'envoi de la requête à OpenAI")?;
+            .context("Échec de l'envoi de la requête à Groq")?;
 
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("Erreur API OpenAI ({}): {}", status, error_body));
+            return Err(anyhow!("Erreur API Groq ({}): {}", status, error_body));
         }
 
-        let chat_response: ChatResponse = response.json()
+        let groq_response: GroqResponse = response.json()
             .await
-            .context("Échec du parsing de la réponse JSON d'OpenAI")?;
+            .context("Échec du parsing de la réponse JSON de Groq")?;
 
-        let result = chat_response.choices
+        let text_result = groq_response.choices
             .first()
-            .ok_or_else(|| anyhow!("Aucune réponse reçue d'OpenAI"))?
-            .message
-            .content
-            .clone();
+            .map(|c| c.message.content.clone())
+            .ok_or_else(|| anyhow!("Réponse vide de Groq"))?;
 
-        Ok(result)
+        Ok(text_result)
     }
 }
 
-/// Helper pour une utilisation rapide sans instanciation manuelle.
-/// 
-/// # Exemple
-/// ```rust
-/// use telegram_ai_analyzer::ai::analyze_text;
-/// 
-/// #[tokio::main]
-/// async fn main() -> anyhow::Result<()> {
-///     let result = analyze_text("2+2=?", "votre_cle_api").await?;
-///     println!("{}", result);
-///     Ok(())
-/// }
-/// ```
 pub async fn analyze_text(text: &str, api_key: &str) -> Result<String> {
     let client = AIClient::new(api_key);
     client.analyze_text(text).await

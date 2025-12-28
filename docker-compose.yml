@@ -1,0 +1,25 @@
+
+
+services:
+  bot:
+    build: .
+    container_name: telegram_ai_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./temp:/app/temp
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep telegram-ai-an"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  temp: 

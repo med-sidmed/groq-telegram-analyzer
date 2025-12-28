@@ -4,23 +4,13 @@ use std::path::{Path, PathBuf};
 use lopdf::Document;
 use std::fs;
 
-/// Extrait le texte d'un fichier PDF en utilisant une approche hybride.
-/// 
-/// 1. Tente d'extraire le texte directement si le PDF est textuel (pdftotext).
-/// 2. Si peu de texte est trouvé, traite le PDF comme scanné (OCR via Tesseract).
-/// 
-/// # Arguments
-/// * `path` - Le chemin vers le fichier PDF.
-/// 
-/// # Retourne
-/// * `Result<String>` - Le texte extrait et nettoyé.
+ 
 pub fn extract_text_from_pdf(path: &str) -> Result<String> {
     let pdf_path = Path::new(path);
     if !pdf_path.exists() {
         return Err(anyhow!("Le fichier PDF n'existe pas : {}", path));
     }
 
-    // Détection : est-ce un PDF scanné ?
     if is_scanned_pdf(path)? {
         extract_scanned_text(path)
     } else {
@@ -28,12 +18,10 @@ pub fn extract_text_from_pdf(path: &str) -> Result<String> {
     }
 }
 
-/// Détecte si un PDF est probablement scanné en vérifiant la présence de texte via lopdf.
 fn is_scanned_pdf(path: &str) -> Result<bool> {
     let doc = Document::load(path)
         .map_err(|e| anyhow!("Erreur lors du chargement du PDF avec lopdf: {}", e))?;
     
-    // On vérifie le texte sur les premières pages
     let mut text_found = false;
     let pages = doc.get_pages();
     
@@ -50,14 +38,32 @@ fn is_scanned_pdf(path: &str) -> Result<bool> {
     Ok(!text_found)
 }
 
-/// Extrait le texte d'un PDF textuel en utilisant `pdftotext` (Poppler).
 fn extract_searchable_text(path: &str) -> Result<String> {
-    let output = Command::new("pdftotext")
+    let mut cmd = Command::new("pdftotext");
+
+    #[cfg(target_os = "windows")]
+    {
+        let common_paths = [
+            r"C:\Program Files\poppler-23.08.0\Library\bin\pdftotext.exe",
+            r"C:\poppler\bin\pdftotext.exe",
+        ];
+        if Command::new("where").arg("pdftotext").output().is_err() {
+            for p in common_paths {
+                if Path::new(p).exists() {
+                    cmd = Command::new(p);
+                    break;
+                }
+            }
+        }
+    }
+
+    let output = cmd
         .arg("-layout")
         .arg(path)
-        .arg("-") // Output to stdout
+        .arg("-")
         .output()
-        .context("Échec de l'exécution de 'pdftotext'. Est-il installé (poppler-utils) ?")?;
+        .context("Échec de l'exécution de 'pdftotext'. Poppler est nécessaire pour lire les PDF.\n\n\
+                 👉 Guide Windows : http://blog.alivate.com.au/poppler-windows/")?;
 
     if !output.status.success() {
         return Err(anyhow!("Erreur pdftotext : {}", String::from_utf8_lossy(&output.stderr)));
@@ -69,9 +75,7 @@ fn extract_searchable_text(path: &str) -> Result<String> {
     Ok(clean_pdf_text(&text))
 }
 
-/// Extrait le texte d'un PDF scanné : PDF -> Images (pdftoppm) -> OCR (Tesseract).
 fn extract_scanned_text(path: &str) -> Result<String> {
-    // Créer un dossier temporaire pour les images
     let temp_dir = Path::new("temp").join("pdf_ocr");
     if !temp_dir.exists() {
         fs::create_dir_all(&temp_dir)?;
@@ -81,8 +85,6 @@ fn extract_scanned_text(path: &str) -> Result<String> {
         .and_then(|s| s.to_str())
         .unwrap_or("doc");
 
-    // 1. Convertir PDF en images via pdftoppm
-    // Génère temp/pdf_ocr/prefix-1.png, prefix-2.png, etc.
     let output = Command::new("pdftoppm")
         .arg("-png")
         .arg("-r")
@@ -96,10 +98,8 @@ fn extract_scanned_text(path: &str) -> Result<String> {
         return Err(anyhow!("Erreur pdftoppm : {}", String::from_utf8_lossy(&output.stderr)));
     }
 
-    // 2. Parcourir les images générées et appliquer Tesseract
-    let mut full_text = String::new();
+     let mut full_text = String::new();
     
-    // On récupère les fichiers triés par nom (page 1, 2, ...)
     let mut entries: Vec<PathBuf> = fs::read_dir(&temp_dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -113,7 +113,6 @@ fn extract_scanned_text(path: &str) -> Result<String> {
         full_text.push_str(&page_text);
         full_text.push_str("\n\n");
         
-        // Nettoyage de l'image temporaire
         let _ = fs::remove_file(img_path);
     }
 
